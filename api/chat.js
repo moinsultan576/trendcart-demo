@@ -61,21 +61,22 @@ async function gemini(p) {
   if (!contents.length || contents[0].role !== 'user') contents.unshift({ role: 'user', parts: [{ text: 'Hello' }] });
   for (const model of GEMINI_MODELS) {
     for (const thinking of [true, false]) {
-      const gen = { temperature: 0.5, responseMimeType: 'application/json', maxOutputTokens: 700 };
+      const gen = { temperature: 0.5, responseMimeType: 'application/json', maxOutputTokens: 2048 };
       if (thinking) gen.thinkingConfig = { thinkingLevel: 'low' };
       try {
         const r = await timed(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
           body: JSON.stringify({ systemInstruction: { parts: [{ text: p.sys }] }, contents, generationConfig: gen }),
-        }, 12000);
+        }, 9000);
         if (r.status === 400 && thinking) continue; // retry same model without thinkingConfig
-        if (!r.ok) break; // 404/429/500/503 → next model
+        if (!r.ok) { console.warn('gemini', model, r.status, (await r.text()).slice(0, 200)); break; } // → next model
         const j = await r.json();
         const txt = (j.candidates?.[0]?.content?.parts || []).filter(x => !x.thought).map(x => x.text || '').join('');
         const data = parseJSON(txt);
         if (data) return { data, provider: 'gemini', model };
+        console.warn('gemini', model, 'unparsed', j.candidates?.[0]?.finishReason, txt.slice(0, 200));
         break;
-      } catch (e) { break; }
+      } catch (e) { console.warn('gemini', model, 'error', e && e.name); break; }
     }
   }
   return null;
@@ -87,7 +88,7 @@ async function groq(p) {
     const messages = [{ role: 'system', content: p.sys }, ...p.msgs.map(m => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text }))];
     const r = await timed('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
-      body: JSON.stringify({ model: GROQ_MODEL, messages, temperature: 0.5, max_tokens: 700, response_format: { type: 'json_object' } }),
+      body: JSON.stringify({ model: GROQ_MODEL, messages, temperature: 0.5, max_tokens: 1200, response_format: { type: 'json_object' } }),
     }, 12000);
     if (!r.ok) return null;
     const j = await r.json();
